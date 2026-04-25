@@ -1,0 +1,19 @@
+Metadata-Version: 2.4
+Name: hytank
+Version: 0.2.0
+Summary: Liquid hydrogen tank modeling tool
+License: MIT License
+License-File: LICENSE
+Requires-Dist: numpy>=1.24
+Requires-Dist: scipy>=1.10.0
+Requires-Dist: openmdao>=3.25
+Provides-Extra: test
+Requires-Dist: pytest; extra == "test"
+Requires-Dist: parameterized; extra == "test"
+Provides-Extra: plot
+Requires-Dist: matplotlib; extra == "plot"
+Dynamic: license
+Dynamic: license-file
+Dynamic: provides-extra
+Dynamic: requires-dist
+Dynamic: summary
