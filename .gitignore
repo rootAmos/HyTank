@@ -4,6 +4,9 @@
 ## pickle files
 *.pkl
 
+## generated OpenMDAO report directories
+*_out/
+
 ## macOS trash files
 .DS_Store
 

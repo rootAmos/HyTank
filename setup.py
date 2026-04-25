@@ -14,6 +14,7 @@ setup(
     packages=find_packages(include=["hytank*"]),
     package_data={"hytank": ["H2_property_data/*_properties.txt"]},
     install_requires=[
+        "CoolProp>=7.1",
         "numpy>=1.24",
         "scipy>=1.10.0",
         "openmdao>=3.25",

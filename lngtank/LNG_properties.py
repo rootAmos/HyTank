@@ -1,8 +1,8 @@
 """
-@File    :   H2_properties.py
+@File    :   LNG_properties.py
 @Date    :   2023/10/10
 @Author  :   Eytan Adler
-@Description : Surrogate models to compute thermophysical properties of hydrogen
+@Description : Surrogate models to compute thermophysical properties of LNG
 """
 
 # ==============================================================================
@@ -24,21 +24,17 @@ try:
 except ImportError:
     CP = None
 
-from hytank.H2_property_data.data_parser import get_sat_property, get_property
-
-
-class HydrogenProperties:
+class LNGProperties:
     """
-    Class for computing hydrogen properties using surrogate models.
+    Class for computing LNG properties using surrogate models.
 
     The default ``backend="coolprop"`` generates the surrogates from CoolProp at
-    runtime and caches them in a user-writable location. ``backend="data"`` keeps
-    the original behavior and builds the surrogates from the packaged tabulated
-    hydrogen property data.
+    runtime and caches them in a user-writable location. CoolProp does not expose
+    a generic LNG pseudo-fluid, so this model uses methane as the LNG proxy.
     """
 
-    _FLUID = "Hydrogen"
-    _T_MIN_GAS = 15.0
+    _FLUID = "Methane"
+    _T_MIN_GAS = 92.0
     _T_MAX_GAS = 300.0
     _P_MIN_GAS = 1.0e4
     _P_MAX_GAS = 12.5e5
@@ -51,14 +47,17 @@ class HydrogenProperties:
         self.backend = backend
 
         if self.backend not in ["coolprop", "data"]:
-            raise ValueError(f'Unsupported hydrogen property backend "{self.backend}"')
+            raise ValueError(f'Unsupported LNG property backend "{self.backend}"')
+        if self.backend == "data":
+            raise ValueError("backend='data' is not supported for LNG; use backend='coolprop'.")
         if self.backend == "coolprop" and CP is None:
             raise ImportError("CoolProp is required for backend='coolprop'. Install the 'CoolProp' package.")
 
         cache_dir = self._get_cache_dir()
         cache_dir.mkdir(parents=True, exist_ok=True)
-        sat_dump_file = cache_dir / f"{self.backend}_saturated_property_surrogate_models.pkl"
-        gas_dump_file = cache_dir / f"{self.backend}_real_gas_property_surrogate_models.pkl"
+        fluid_tag = self._FLUID.lower()
+        sat_dump_file = cache_dir / f"{fluid_tag}_{self.backend}_saturated_property_surrogate_models.pkl"
+        gas_dump_file = cache_dir / f"{fluid_tag}_{self.backend}_real_gas_property_surrogate_models.pkl"
 
         if sat_dump_file.exists():
             if self._print_output:
@@ -109,98 +108,52 @@ class HydrogenProperties:
         self.fd_step_rho = 1e-6
 
     def _get_cache_dir(self):
-        if self.backend == "data":
-            return Path(os.path.dirname(os.path.abspath(__file__))) / "H2_property_data"
-
-        cache_root = os.getenv("HYTANK_CACHE_DIR")
+        cache_root = os.getenv("LNGTANK_CACHE_DIR")
         if cache_root:
             return Path(cache_root)
 
         local_app_data = os.getenv("LOCALAPPDATA")
         if local_app_data:
-            return Path(local_app_data) / "hytank"
+            return Path(local_app_data) / "lngtank"
 
-        return Path.home() / ".cache" / "hytank"
+        return Path.home() / ".cache" / "lngtank"
 
     def _build_saturated_surrogates(self):
-        if self.backend == "data":
-            sat_surrogates = {
-                "lh2_P": {"x": get_sat_property("Temperature (K)"), "y": get_sat_property("Pressure (MPa)") * 1e6},
-                "lh2_h": {"x": get_sat_property("Temperature (K)"), "y": get_sat_property("Enthalpy (l, kJ/kg)") * 1e3},
-                "lh2_u": {
-                    "x": get_sat_property("Temperature (K)"),
-                    "y": get_sat_property("Internal Energy (l, kJ/kg)") * 1e3,
-                },
-                "lh2_cp": {"x": get_sat_property("Temperature (K)"), "y": get_sat_property("Cp (l, J/g*K)") * 1e3},
-                "lh2_rho": {"x": get_sat_property("Temperature (K)"), "y": get_sat_property("Density (l, kg/m3)")},
-                "lh2_k": {
-                    "x": get_sat_property("Temperature (K)"),
-                    "y": get_sat_property("Therm. Cond. (l, W/m*K)"),
-                },
-                "lh2_viscosity": {
-                    "x": get_sat_property("Temperature (K)"),
-                    "y": get_sat_property("Viscosity (l, Pa*s)"),
-                },
-                "lh2_beta": {
-                    "x": get_sat_property("Temperature (K)"),
-                    "y": get_sat_property("Thermal Expansion Coefficient (l, 1/K)"),
-                },
-                "sat_gh2_rho": {"x": get_sat_property("Temperature (K)"), "y": get_sat_property("Density (v, kg/m3)")},
-                "sat_gh2_h": {
-                    "x": get_sat_property("Temperature (K)"),
-                    "y": get_sat_property("Enthalpy (v, kJ/kg)") * 1e3,
-                },
-                "sat_gh2_cp": {"x": get_sat_property("Temperature (K)"), "y": get_sat_property("Cp (v, J/g*K)") * 1e3},
-                "sat_gh2_k": {
-                    "x": get_sat_property("Temperature (K)"),
-                    "y": get_sat_property("Therm. Cond. (v, W/m*K)"),
-                },
-                "sat_gh2_viscosity": {
-                    "x": get_sat_property("Temperature (K)"),
-                    "y": get_sat_property("Viscosity (v, Pa*s)"),
-                },
-                "sat_gh2_beta": {
-                    "x": get_sat_property("Temperature (K)"),
-                    "y": get_sat_property("Thermal Expansion Coefficient (v, 1/K)"),
-                },
-                "sat_gh2_T": {"x": get_sat_property("Pressure (MPa)") * 1e6, "y": get_sat_property("Temperature (K)")},
-            }
-        else:
-            T_trip = CP.PropsSI("Ttriple", self._FLUID)
-            T_crit = CP.PropsSI("Tcrit", self._FLUID)
-            T_sat = np.linspace(T_trip + 1e-3, T_crit - 1e-3, self._N_SAT)
+        T_trip = CP.PropsSI("Ttriple", self._FLUID)
+        T_crit = CP.PropsSI("Tcrit", self._FLUID)
+        T_sat = np.linspace(T_trip + 1e-3, T_crit - 1e-3, self._N_SAT)
 
-            P_sat = self._propssi("P", "T", T_sat, "Q", 0)
-            h_liq = self._propssi("Hmass", "T", T_sat, "Q", 0)
-            u_liq = self._propssi("Umass", "T", T_sat, "Q", 0)
-            cp_liq = self._propssi("Cpmass", "T", T_sat, "Q", 0)
-            rho_liq = self._propssi("Dmass", "T", T_sat, "Q", 0)
-            k_liq = self._propssi("conductivity", "T", T_sat, "Q", 0)
-            viscosity_liq = self._propssi("viscosity", "T", T_sat, "Q", 0)
+        P_sat = self._propssi("P", "T", T_sat, "Q", 0)
+        h_liq = self._propssi("Hmass", "T", T_sat, "Q", 0)
+        u_liq = self._propssi("Umass", "T", T_sat, "Q", 0)
+        cp_liq = self._propssi("Cpmass", "T", T_sat, "Q", 0)
+        rho_liq = self._propssi("Dmass", "T", T_sat, "Q", 0)
+        k_liq = self._propssi("conductivity", "T", T_sat, "Q", 0)
+        viscosity_liq = self._propssi("viscosity", "T", T_sat, "Q", 0)
 
-            rho_vap = self._propssi("Dmass", "T", T_sat, "Q", 1)
-            h_vap = self._propssi("Hmass", "T", T_sat, "Q", 1)
-            cp_vap = self._propssi("Cpmass", "T", T_sat, "Q", 1)
-            k_vap = self._propssi("conductivity", "T", T_sat, "Q", 1)
-            viscosity_vap = self._propssi("viscosity", "T", T_sat, "Q", 1)
+        rho_vap = self._propssi("Dmass", "T", T_sat, "Q", 1)
+        h_vap = self._propssi("Hmass", "T", T_sat, "Q", 1)
+        cp_vap = self._propssi("Cpmass", "T", T_sat, "Q", 1)
+        k_vap = self._propssi("conductivity", "T", T_sat, "Q", 1)
+        viscosity_vap = self._propssi("viscosity", "T", T_sat, "Q", 1)
 
-            sat_surrogates = {
-                "lh2_P": {"x": T_sat, "y": P_sat},
-                "lh2_h": {"x": T_sat, "y": h_liq},
-                "lh2_u": {"x": T_sat, "y": u_liq},
-                "lh2_cp": {"x": T_sat, "y": cp_liq},
-                "lh2_rho": {"x": T_sat, "y": rho_liq},
-                "lh2_k": {"x": T_sat, "y": k_liq},
-                "lh2_viscosity": {"x": T_sat, "y": viscosity_liq},
-                "lh2_beta": {"x": T_sat, "y": self._thermal_expansion_from_density(T_sat, rho_liq)},
-                "sat_gh2_rho": {"x": T_sat, "y": rho_vap},
-                "sat_gh2_h": {"x": T_sat, "y": h_vap},
-                "sat_gh2_cp": {"x": T_sat, "y": cp_vap},
-                "sat_gh2_k": {"x": T_sat, "y": k_vap},
-                "sat_gh2_viscosity": {"x": T_sat, "y": viscosity_vap},
-                "sat_gh2_beta": {"x": T_sat, "y": self._thermal_expansion_from_density(T_sat, rho_vap)},
-                "sat_gh2_T": {"x": P_sat, "y": T_sat},
-            }
+        sat_surrogates = {
+            "lng_P": {"x": T_sat, "y": P_sat},
+            "lng_h": {"x": T_sat, "y": h_liq},
+            "lng_u": {"x": T_sat, "y": u_liq},
+            "lng_cp": {"x": T_sat, "y": cp_liq},
+            "lng_rho": {"x": T_sat, "y": rho_liq},
+            "lng_k": {"x": T_sat, "y": k_liq},
+            "lng_viscosity": {"x": T_sat, "y": viscosity_liq},
+            "lng_beta": {"x": T_sat, "y": self._thermal_expansion_from_density(T_sat, rho_liq)},
+            "sat_gng_rho": {"x": T_sat, "y": rho_vap},
+            "sat_gng_h": {"x": T_sat, "y": h_vap},
+            "sat_gng_cp": {"x": T_sat, "y": cp_vap},
+            "sat_gng_k": {"x": T_sat, "y": k_vap},
+            "sat_gng_viscosity": {"x": T_sat, "y": viscosity_vap},
+            "sat_gng_beta": {"x": T_sat, "y": self._thermal_expansion_from_density(T_sat, rho_vap)},
+            "sat_gng_T": {"x": P_sat, "y": T_sat},
+        }
 
         for key, val in sat_surrogates.items():
             sat_surrogates[key]["surrogate"] = interp.CubicSpline(val["x"], val["y"], extrapolate=True)
@@ -210,41 +163,29 @@ class HydrogenProperties:
         return sat_surrogates
 
     def _build_gas_surrogates(self):
-        if self.backend == "data":
-            phase = "vapor"
-            vals = {
-                "P": get_property("Pressure (MPa)", phase=phase) * 1e6,
-                "T": get_property("Temperature (K)", phase=phase),
-                "rho": get_property("Density (kg/m3)", phase=phase),
-                "cv": get_property("Cv (J/g*K)", phase=phase) * 1e3,
-                "cp": get_property("Cp (J/g*K)", phase=phase) * 1e3,
-                "u": get_property("Internal Energy (kJ/kg)", phase=phase) * 1e3,
-                "h": get_property("Enthalpy (kJ/kg)", phase=phase) * 1e3,
-            }
-        else:
-            T_crit = CP.PropsSI("Tcrit", self._FLUID)
-            T_vals = np.linspace(self._T_MIN_GAS, self._T_MAX_GAS, self._N_T_GAS)
-            P_vals = np.linspace(self._P_MIN_GAS, self._P_MAX_GAS, self._N_P_GAS)
-            PP, TT = np.meshgrid(P_vals, T_vals, indexing="ij")
+        T_crit = CP.PropsSI("Tcrit", self._FLUID)
+        T_vals = np.linspace(self._T_MIN_GAS, self._T_MAX_GAS, self._N_T_GAS)
+        P_vals = np.linspace(self._P_MIN_GAS, self._P_MAX_GAS, self._N_P_GAS)
+        PP, TT = np.meshgrid(P_vals, T_vals, indexing="ij")
 
-            Psat_limit = np.full_like(TT, np.inf, dtype=float)
-            subcritical = TT < T_crit
-            if np.any(subcritical):
-                Psat_limit[subcritical] = self._propssi("P", "T", TT[subcritical], "Q", 1)
+        Psat_limit = np.full_like(TT, np.inf, dtype=float)
+        subcritical = TT < T_crit
+        if np.any(subcritical):
+            Psat_limit[subcritical] = self._propssi("P", "T", TT[subcritical], "Q", 1)
 
-            vapor_mask = (~subcritical) | (PP <= Psat_limit * 0.999)
-            P = PP[vapor_mask]
-            T = TT[vapor_mask]
+        vapor_mask = (~subcritical) | (PP <= Psat_limit * 0.999)
+        P = PP[vapor_mask]
+        T = TT[vapor_mask]
 
-            vals = {
-                "P": P,
-                "T": T,
-                "rho": self._propssi("Dmass", "P", P, "T", T),
-                "cv": self._propssi("Cvmass", "P", P, "T", T),
-                "cp": self._propssi("Cpmass", "P", P, "T", T),
-                "u": self._propssi("Umass", "P", P, "T", T),
-                "h": self._propssi("Hmass", "P", P, "T", T),
-            }
+        vals = {
+            "P": P,
+            "T": T,
+            "rho": self._propssi("Dmass", "P", P, "T", T),
+            "cv": self._propssi("Cvmass", "P", P, "T", T),
+            "cp": self._propssi("Cpmass", "P", P, "T", T),
+            "u": self._propssi("Umass", "P", P, "T", T),
+            "h": self._propssi("Hmass", "P", P, "T", T),
+        }
 
         surr_keys = {
             "P": ["rho", "T"],
@@ -327,77 +268,77 @@ class HydrogenProperties:
             val = self.sat_surrogates[name]["surrogate"](x)
         return val.item() if is_float else val
 
-    def gh2_P(self, rho, T, deriv=False):
+    def gng_P(self, rho, T, deriv=False):
         if isinstance(rho, np.ndarray) and isinstance(T, np.ndarray) and rho.shape != T.shape:
             raise ValueError("Pressure and temperature must have the same shape if they are both numpy arrays")
         return self._eval_surrogate("P", np.vstack((rho, T)).T, deriv=deriv)
 
-    def gh2_rho(self, P, T, deriv=False):
+    def gng_rho(self, P, T, deriv=False):
         if isinstance(P, np.ndarray) and isinstance(T, np.ndarray) and P.shape != T.shape:
             raise ValueError("Pressure and temperature must have the same shape if they are both numpy arrays")
         return self._eval_surrogate("rho", np.vstack((P, T)).T, deriv=deriv)
 
-    def gh2_cv(self, P, T, deriv=False):
+    def gng_cv(self, P, T, deriv=False):
         if isinstance(P, np.ndarray) and isinstance(T, np.ndarray) and P.shape != T.shape:
             raise ValueError("Pressure and temperature must have the same shape if they are both numpy arrays")
         return self._eval_surrogate("cv", np.vstack((P, T)).T, deriv=deriv)
 
-    def gh2_cp(self, P, T, deriv=False):
+    def gng_cp(self, P, T, deriv=False):
         if isinstance(P, np.ndarray) and isinstance(T, np.ndarray) and P.shape != T.shape:
             raise ValueError("Pressure and temperature must have the same shape if they are both numpy arrays")
         return self._eval_surrogate("cp", np.vstack((P, T)).T, deriv=deriv)
 
-    def gh2_u(self, P, T, deriv=False):
+    def gng_u(self, P, T, deriv=False):
         if isinstance(P, np.ndarray) and isinstance(T, np.ndarray) and P.shape != T.shape:
             raise ValueError("Pressure and temperature must have the same shape if they are both numpy arrays")
         return self._eval_surrogate("u", np.vstack((P, T)).T, deriv=deriv)
 
-    def gh2_h(self, P, T, deriv=False):
+    def gng_h(self, P, T, deriv=False):
         if isinstance(P, np.ndarray) and isinstance(T, np.ndarray) and P.shape != T.shape:
             raise ValueError("Pressure and temperature must have the same shape if they are both numpy arrays")
         return self._eval_surrogate("h", np.vstack((P, T)).T, deriv=deriv)
 
-    def lh2_P(self, T, deriv=False):
-        return self._eval_surrogate("lh2_P", T, deriv=deriv)
+    def lng_P(self, T, deriv=False):
+        return self._eval_surrogate("lng_P", T, deriv=deriv)
 
-    def lh2_h(self, T, deriv=False):
-        return self._eval_surrogate("lh2_h", T, deriv=deriv)
+    def lng_h(self, T, deriv=False):
+        return self._eval_surrogate("lng_h", T, deriv=deriv)
 
-    def lh2_u(self, T, deriv=False):
-        return self._eval_surrogate("lh2_u", T, deriv=deriv)
+    def lng_u(self, T, deriv=False):
+        return self._eval_surrogate("lng_u", T, deriv=deriv)
 
-    def lh2_cp(self, T, deriv=False):
-        return self._eval_surrogate("lh2_cp", T, deriv=deriv)
+    def lng_cp(self, T, deriv=False):
+        return self._eval_surrogate("lng_cp", T, deriv=deriv)
 
-    def lh2_rho(self, T, deriv=False):
-        return self._eval_surrogate("lh2_rho", T, deriv=deriv)
+    def lng_rho(self, T, deriv=False):
+        return self._eval_surrogate("lng_rho", T, deriv=deriv)
 
-    def lh2_k(self, T, deriv=False):
-        return self._eval_surrogate("lh2_k", T, deriv=deriv)
+    def lng_k(self, T, deriv=False):
+        return self._eval_surrogate("lng_k", T, deriv=deriv)
 
-    def lh2_viscosity(self, T, deriv=False):
-        return self._eval_surrogate("lh2_viscosity", T, deriv=deriv)
+    def lng_viscosity(self, T, deriv=False):
+        return self._eval_surrogate("lng_viscosity", T, deriv=deriv)
 
-    def lh2_beta(self, T, deriv=False):
-        return self._eval_surrogate("lh2_beta", T, deriv=deriv)
+    def lng_beta(self, T, deriv=False):
+        return self._eval_surrogate("lng_beta", T, deriv=deriv)
 
-    def sat_gh2_rho(self, T, deriv=False):
-        return self._eval_surrogate("sat_gh2_rho", T, deriv=deriv)
+    def sat_gng_rho(self, T, deriv=False):
+        return self._eval_surrogate("sat_gng_rho", T, deriv=deriv)
 
-    def sat_gh2_h(self, T, deriv=False):
-        return self._eval_surrogate("sat_gh2_h", T, deriv=deriv)
+    def sat_gng_h(self, T, deriv=False):
+        return self._eval_surrogate("sat_gng_h", T, deriv=deriv)
 
-    def sat_gh2_cp(self, T, deriv=False):
-        return self._eval_surrogate("sat_gh2_cp", T, deriv=deriv)
+    def sat_gng_cp(self, T, deriv=False):
+        return self._eval_surrogate("sat_gng_cp", T, deriv=deriv)
 
-    def sat_gh2_k(self, T, deriv=False):
-        return self._eval_surrogate("sat_gh2_k", T, deriv=deriv)
+    def sat_gng_k(self, T, deriv=False):
+        return self._eval_surrogate("sat_gng_k", T, deriv=deriv)
 
-    def sat_gh2_viscosity(self, T, deriv=False):
-        return self._eval_surrogate("sat_gh2_viscosity", T, deriv=deriv)
+    def sat_gng_viscosity(self, T, deriv=False):
+        return self._eval_surrogate("sat_gng_viscosity", T, deriv=deriv)
 
-    def sat_gh2_beta(self, T, deriv=False):
-        return self._eval_surrogate("sat_gh2_beta", T, deriv=deriv)
+    def sat_gng_beta(self, T, deriv=False):
+        return self._eval_surrogate("sat_gng_beta", T, deriv=deriv)
 
-    def sat_gh2_T(self, P, deriv=False):
-        return self._eval_surrogate("sat_gh2_T", P, deriv=deriv)
+    def sat_gng_T(self, P, deriv=False):
+        return self._eval_surrogate("sat_gng_T", P, deriv=deriv)

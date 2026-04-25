@@ -1,8 +1,8 @@
 """
-@File    :   test_LH2_tank.py
+@File    :   test_LNG_tank.py
 @Date    :   2023/10/10
 @Author  :   Eytan Adler
-@Description : Test the code in LH2_tank.py
+@Description : Test the code in LNG_tank.py
 """
 
 # ==============================================================================
@@ -13,90 +13,23 @@ import unittest
 # ==============================================================================
 # External Python modules
 # ==============================================================================
-import numpy as np
 import openmdao.api as om
 from openmdao.utils.assert_utils import assert_near_equal
 
 # ==============================================================================
 # Extension modules
 # ==============================================================================
-import hytank.boil_off as boil_off_module
-from hytank.H2_properties import HydrogenProperties
-from hytank.LH2_tank import *
+from lngtank.LNG_tank import *
 
 
-class LH2TankTestCase(unittest.TestCase):
-    def _run_tank_case(self, backend):
-        original_prop = boil_off_module.H2_prop
-        boil_off_module.H2_prop = HydrogenProperties(backend=backend)
-
-        try:
-            nn = 7
-            p = om.Problem()
-            p.model.add_subsystem(
-                "tank",
-                LH2Tank(
-                    num_nodes=nn,
-                    fill_level_init=0.92,
-                    ullage_P_init=1.35e5,
-                    ullage_T_init=23,
-                    liquid_T_init=20,
-                    weight_fudge_factor=1.1,
-                    inner_safety_factor=1.5,
-                    heat_multiplier=1.2,
-                ),
-                promotes=["*"],
-            )
-
-            p.model.linear_solver = om.DirectSolver()
-            p.model.nonlinear_solver = om.NewtonSolver()
-            p.model.nonlinear_solver.options["err_on_non_converge"] = True
-            p.model.nonlinear_solver.options["solve_subsystems"] = True
-            p.model.nonlinear_solver.options["maxiter"] = 30
-            p.model_options["*"] = {
-                "heater_boil_frac": 0.75,
-                "heat_transfer_C_gas_const": 0.27,
-                "heat_transfer_n_gas_const": 0.25,
-                "heat_transfer_C_liq_const": 0.27,
-                "heat_transfer_n_liq_const": 0.25,
-            }
-
-            p.setup()
-
-            p.set_val("thermals.boil_off.integ.duration", 4.0, units="h")
-            p.set_val("radius", 1.8, units="m")
-            p.set_val("length", 0.8, units="m")
-            p.set_val("P_heater", np.linspace(800.0, 0.0, nn), units="W")
-            p.set_val("m_dot_gas_out", np.linspace(0.0, 0.3, nn), units="kg/h")
-            p.set_val("m_dot_liq_out", np.linspace(20.0, 35.0, nn), units="kg/h")
-            p.set_val("T_env", 295.0, units="K")
-            p.set_val("N_layers", 15)
-            p.set_val("environment_design_pressure", 1.0, units="atm")
-            p.set_val("max_expected_operating_pressure", 2.5, units="bar")
-            p.set_val("vacuum_gap", 0.08, units="m")
-
-            p.run_model()
-
-            return {
-                "m_gas": p.get_val("m_gas", units="kg"),
-                "m_liq": p.get_val("m_liq", units="kg"),
-                "T_gas": p.get_val("T_gas", units="K"),
-                "T_liq": p.get_val("T_liq", units="K"),
-                "P": p.get_val("P", units="Pa"),
-                "fill_level": p.get_val("fill_level"),
-                "tank_weight": p.get_val("tank_weight", units="kg"),
-                "total_weight": p.get_val("total_weight", units="kg"),
-            }
-        finally:
-            boil_off_module.H2_prop = original_prop
-
+class LNGTankTestCase(unittest.TestCase):
     def test_simple(self):
         """
         Test that this component runs and the outputs haven't changed.
         """
         nn = 5
         p = om.Problem()
-        p.model = LH2Tank(
+        p.model = LNGTank(
             ullage_P_init=101325.0,
             fill_level_init=0.95,
             ullage_T_init=25,
@@ -145,7 +78,7 @@ class LH2TankTestCase(unittest.TestCase):
         p = om.Problem()
         p.model.add_subsystem(
             "tank",
-            LH2Tank(
+            LNGTank(
                 num_nodes=nn,
                 fill_level_init=0.95,
                 ullage_P_init=1.5e5,
@@ -322,40 +255,15 @@ class LH2TankTestCase(unittest.TestCase):
         )
         assert_near_equal(p.get_val("tank_weight", units="kg"), 6070.79415169, tolerance=1e-9)
 
-    def test_backend_comparison(self):
-        data_results = self._run_tank_case("data")
-        coolprop_results = self._run_tank_case("coolprop")
 
-        print("\nLH2Tank backend comparison")
-        print("=" * 80)
-
-        for key in ["m_gas", "m_liq", "T_gas", "T_liq", "P", "fill_level", "tank_weight", "total_weight"]:
-            data_val = np.atleast_1d(data_results[key])
-            coolprop_val = np.atleast_1d(coolprop_results[key])
-            abs_diff = coolprop_val - data_val
-            rel_diff = np.divide(
-                abs_diff,
-                data_val,
-                out=np.full_like(abs_diff, np.nan, dtype=float),
-                where=np.abs(data_val) > 1e-12,
-            )
-
-            print(f"{key}:")
-            print(f"  data     = {data_val}")
-            print(f"  coolprop = {coolprop_val}")
-            print(f"  abs diff = {abs_diff}")
-            print(f"  rel diff = {rel_diff}")
-            print("-" * 80)
-
-
-class LH2TankThermalsTestCase(unittest.TestCase):
+class LNGTankThermalsTestCase(unittest.TestCase):
     def test_end_caps(self):
         """
         Test that this component runs and the outputs haven't changed.
         """
         nn = 5
         p = om.Problem()
-        p.model = LH2TankThermals(
+        p.model = LNGTankThermals(
             ullage_P_init=4e5,
             fill_level_init=0.95,
             ullage_T_init=27,
