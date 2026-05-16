@@ -1,11 +1,12 @@
 """
 Closed-loop AeroSandbox mission and LNG tank example.
 
-This example uses a simple powered 2D point-mass aircraft model with three
-mission phases: climb, cruise, and descent. The LNG tank is solved inside the
-same AeroSandbox optimization problem. Atmospheric temperature from the flight
-trajectory drives the tank heat leak, engine fuel flow draws liquid LNG from
-the tank, and the remaining tank fluid mass feeds back into aircraft weight.
+This example uses AeroSandbox's 2D point-mass speed/gamma dynamics stack with
+three mission phases: climb, cruise, and descent. The LNG tank is solved inside
+the same AeroSandbox optimization problem. Atmospheric temperature from the
+flight trajectory drives the tank heat leak, engine fuel flow draws liquid LNG
+from the tank, and the remaining tank fluid mass feeds back into aircraft
+weight.
 """
 
 from dataclasses import dataclass
@@ -17,7 +18,6 @@ import matplotlib.pyplot as plt
 import numpy as onp
 
 from lngtank.aerosandbox_tank import (
-    InitialState,
     MissionInputs,
     TankDesign,
     initial_gas_density_from_pressure,
@@ -171,10 +171,25 @@ def build_coupled_problem(
 
     def node_rhs(k):
         atmosphere = asb.Atmosphere(altitude=z[k])
-        rho = atmosphere.density()
+        op_point = asb.OperatingPoint(
+            atmosphere=atmosphere,
+            velocity=v[k],
+            alpha=0.0,
+        )
+        dynamics = asb.DynamicsPointMass2DSpeedGamma(
+            mass_props=asb.MassProperties(
+                mass=aircraft.dry_mass + aircraft.tank_hardware_mass + m_gas[k] + m_liq[k],
+            ),
+            x_e=x[k],
+            z_e=z[k],
+            speed=v[k],
+            gamma=gamma[k],
+        )
+
         t_env = atmosphere.temperature()
+        rho = atmosphere.density()
         density_ratio = rho / rho0
-        q_dyn = 0.5 * rho * v[k] ** 2
+        q_dyn = op_point.dynamic_pressure()
         cd = aircraft.cd0 + induced_factor * cl[k] ** 2
         lift = q_dyn * aircraft.wing_area * cl[k]
         drag = q_dyn * aircraft.wing_area * cd
@@ -197,11 +212,10 @@ def build_coupled_problem(
             h_liq_frac=h_liq_frac[k],
         )
 
-        mass = aircraft.dry_mass + aircraft.tank_hardware_mass + m_gas[k] + m_liq[k]
-        x_dot = v[k] * np.cos(gamma[k])
-        z_dot = v[k] * np.sin(gamma[k])
-        v_dot = (thrust - drag) / mass - G * np.sin(gamma[k])
-        gamma_dot = (lift - mass * G * np.cos(gamma[k])) / (mass * v[k])
+        dynamics.add_force(Fx=thrust - drag, Fz=-lift, axes="wind")
+        dynamics.add_gravity_force(g=G)
+        state_derivatives = dynamics.state_derivatives()
+        mass = dynamics.mass_props.mass
 
         aux["pressure"].append(tank_aux["pressure"])
         aux["fill_level"].append(tank_aux["fill_level"])
@@ -210,7 +224,13 @@ def build_coupled_problem(
         aux["q_gas"].append(tank_aux["q_gas"])
         aux["q_liq"].append(tank_aux["q_liq"])
         aux["t_env"].append(t_env)
-        return [x_dot, z_dot, v_dot, gamma_dot, *tank_f]
+        return [
+            state_derivatives["x_e"],
+            state_derivatives["z_e"],
+            state_derivatives["speed"],
+            state_derivatives["gamma"],
+            *tank_f,
+        ]
 
     for k in range(n):
         rhs_k = node_rhs(k)
