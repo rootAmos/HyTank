@@ -55,6 +55,7 @@ lngtank/LNG_properties.py
 lngtank/LNG_properties_MendezRamos.py
 lngtank/LNG_tank.py
 lngtank/__init__.py
+lngtank/aerosandbox_tank.py
 lngtank/boil_off.py
 lngtank/heat_leak.py
 lngtank/weight.py

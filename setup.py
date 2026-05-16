@@ -22,5 +22,6 @@ setup(
     extras_require={
         "test": ["pytest", "parameterized"],
         "plot": ["matplotlib"],
+        "asb": ["aerosandbox>=4.2.9"],
     },
 )

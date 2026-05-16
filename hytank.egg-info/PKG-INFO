@@ -13,6 +13,8 @@ Requires-Dist: pytest; extra == "test"
 Requires-Dist: parameterized; extra == "test"
 Provides-Extra: plot
 Requires-Dist: matplotlib; extra == "plot"
+Provides-Extra: asb
+Requires-Dist: aerosandbox>=4.2.9; extra == "asb"
 Dynamic: license
 Dynamic: license-file
 Dynamic: provides-extra
