@@ -185,6 +185,8 @@ class CoolPropGridInterpolants:
 
         func = self._sat_grad_funcs[name] if deriv else self._sat_funcs[name]
         if self._is_symbolic(x):
+            if x.numel() > 1:
+                return ca.vertcat(*[func(x[i]) for i in range(x.numel())])
             return func(x)
 
         x_arr = np.asarray(x, dtype=float)
@@ -196,6 +198,18 @@ class CoolPropGridInterpolants:
             raise ValueError("Only first derivatives are supported by the CasADi interpolant backend.")
 
         if self._is_symbolic(x0) or self._is_symbolic(x1):
+            if not self._is_symbolic(x0):
+                x0 = ca.DM(x0)
+            if not self._is_symbolic(x1):
+                x1 = ca.DM(x1)
+            if x0.numel() > 1 or x1.numel() > 1:
+                if x0.numel() != x1.numel():
+                    raise ValueError("Symbolic interpolant inputs must have the same length.")
+                if deriv:
+                    grads = [self._gas_grad_funcs[name](ca.vertcat(x0[i], x1[i])) for i in range(x0.numel())]
+                    return ca.vertcat(*[grad[0] for grad in grads]), ca.vertcat(*[grad[1] for grad in grads])
+                return ca.vertcat(*[self._gas_funcs[name](ca.vertcat(x0[i], x1[i])) for i in range(x0.numel())])
+
             x = ca.vertcat(x0, x1)
             if deriv:
                 grad = self._gas_grad_funcs[name](x)

@@ -51,6 +51,8 @@ class MissionSpec:
     duration: float = 2400.0  # s
     range: float = 170e3  # m
     cruise_altitude: float = 2500.0  # m
+    cruise_speed: float = 72.0  # m/s
+    end_of_cruise_range_fraction: float = 0.75
     initial_speed: float = 78.0  # m/s
     final_speed: float = 78.0  # m/s
     p_heater: float = 1000.0  # W
@@ -88,7 +90,6 @@ def build_coupled_problem(
 
     n = mission.num_nodes
     time = onp.linspace(0.0, mission.duration, n)
-    dt = mission.duration / (n - 1)
     climb_end = int(0.25 * (n - 1))
     descent_start = int(0.75 * (n - 1))
 
@@ -186,7 +187,10 @@ def build_coupled_problem(
         opti.subject_to(
             [
                 dyn.altitude[climb_end] == mission.cruise_altitude,
-                dyn.altitude[climb_end : descent_start + 1] == mission.cruise_altitude,
+                dyn.altitude[descent_start] == mission.cruise_altitude,
+                dyn.speed[climb_end] == mission.cruise_speed,
+                dyn.speed[descent_start] == mission.cruise_speed,
+                dyn.x_e[descent_start] == mission.end_of_cruise_range_fraction * mission.range,
                 dyn.gamma[climb_end] == 0.0,
                 dyn.gamma[descent_start] == 0.0,
             ]
@@ -210,48 +214,47 @@ def build_coupled_problem(
     dyn.constrain_derivatives(opti, time)
 
     tank_states = [m_gas, m_liq, t_gas, t_liq, v_gas, q_add]
-    tank_rhs_values = []
-    aux = {key: [] for key in ["pressure", "fill_level", "m_dot_fuel", "mass", "q_gas", "q_liq", "t_env"]}
-
-    for k in range(n):
-        tank_inputs = MissionInputs(
-            duration=mission.duration,
-            t_env=t_env[k],
-            p_heater=mission.p_heater,
-            m_dot_liq_out=m_dot_fuel[k],
-            m_dot_gas_out=0.0,
+    tank_inputs = MissionInputs(
+        duration=mission.duration,
+        t_env=t_env,
+        p_heater=mission.p_heater,
+        m_dot_liq_out=m_dot_fuel,
+        m_dot_gas_out=0.0,
+    )
+    tank_rhs_values, tank_aux = tank_rhs(
+        tank_states,
+        tank_design,
+        tank_inputs,
+        props,
+        h_liq_frac=h_liq_frac,
+    )
+    for state, derivative in zip(tank_states, tank_rhs_values):
+        opti.constrain_derivative(
+            derivative=derivative,
+            variable=state,
+            with_respect_to=time,
+            method="trapezoidal",
         )
-        tank_f, tank_aux = tank_rhs(
-            [m_gas[k], m_liq[k], t_gas[k], t_liq[k], v_gas[k], q_add[k]],
-            tank_design,
-            tank_inputs,
-            props,
-            h_liq_frac=h_liq_frac[k],
-        )
-        tank_rhs_values.append(tank_f)
 
-        aux["pressure"].append(tank_aux["pressure"])
-        aux["fill_level"].append(tank_aux["fill_level"])
-        aux["m_dot_fuel"].append(m_dot_fuel[k])
-        aux["mass"].append(mass[k])
-        aux["q_gas"].append(tank_aux["q_gas"])
-        aux["q_liq"].append(tank_aux["q_liq"])
-        aux["t_env"].append(t_env[k])
-
-        opti.subject_to(aux["pressure"][k] <= mission.initial_pressure)
-        opti.subject_to(aux["pressure"][k] >= 2.0e5)
-        opti.subject_to(aux["fill_level"][k] >= 0.05)
-        opti.subject_to(aux["fill_level"][k] <= 0.95)
-        opti.subject_to(
-            liquid_volume_from_height_fraction(tank_design.radius, tank_design.length, h_liq_frac[k])
-            == volume * aux["fill_level"][k]
-        )
+    opti.subject_to(tank_aux["pressure"] <= mission.initial_pressure)
+    opti.subject_to(tank_aux["pressure"] >= 2.0e5)
+    opti.subject_to(tank_aux["fill_level"] >= 0.05)
+    opti.subject_to(tank_aux["fill_level"] <= 0.95)
+    opti.subject_to(
+        liquid_volume_from_height_fraction(tank_design.radius, tank_design.length, h_liq_frac)
+        == volume * tank_aux["fill_level"]
+    )
+    aux = {
+        "pressure": tank_aux["pressure"],
+        "fill_level": tank_aux["fill_level"],
+        "m_dot_fuel": m_dot_fuel,
+        "mass": mass,
+        "q_gas": tank_aux["q_gas"],
+        "q_liq": tank_aux["q_liq"],
+        "t_env": t_env,
+    }
 
     for k in range(n - 1):
-        for i, state in enumerate(tank_states):
-            opti.subject_to(
-                state[k + 1] - state[k] == 0.5 * dt * (tank_rhs_values[k][i] + tank_rhs_values[k + 1][i])
-            )
         opti.subject_to(throttle[k + 1] - throttle[k] <= 0.12)
         opti.subject_to(throttle[k + 1] - throttle[k] >= -0.12)
         opti.subject_to(cl[k + 1] - cl[k] <= 0.12)
@@ -299,13 +302,13 @@ def plot_solution(problem, sol, output_path):
         "range_km": onp.array(sol.value(states["x"])) / 1000,
         "speed_m_s": onp.array(sol.value(states["V"])),
         "throttle": onp.array(sol.value(states["throttle"])),
-        "mass_kg": onp.array([sol.value(v) for v in aux["mass"]]),
-        "fuel_flow_kg_s": onp.array([sol.value(v) for v in aux["m_dot_fuel"]]),
-        "pressure_bar": onp.array([sol.value(v) for v in aux["pressure"]]) / 1e5,
-        "fill_level": onp.array([sol.value(v) for v in aux["fill_level"]]),
+        "mass_kg": onp.array(sol.value(aux["mass"])),
+        "fuel_flow_kg_s": onp.array(sol.value(aux["m_dot_fuel"])),
+        "pressure_bar": onp.array(sol.value(aux["pressure"])) / 1e5,
+        "fill_level": onp.array(sol.value(aux["fill_level"])),
         "t_gas_K": onp.array(sol.value(states["T_gas"])),
         "t_liq_K": onp.array(sol.value(states["T_liq"])),
-        "t_env_K": onp.array([sol.value(v) for v in aux["t_env"]]),
+        "t_env_K": onp.array(sol.value(aux["t_env"])),
     }
 
     fig, axes = plt.subplots(4, 2, figsize=(12, 13), sharex=True)
