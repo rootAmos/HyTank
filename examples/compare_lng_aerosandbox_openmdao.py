@@ -8,8 +8,9 @@ and does not reproduce the OpenMDAO transient.
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 
-import aerosandbox.numpy as asb_np
+import matplotlib.pyplot as plt
 import numpy as np
 import openmdao.api as om
 
@@ -22,6 +23,9 @@ from lngtank.aerosandbox_tank import (
     TankDesign,
     build_trajectory_problem,
 )
+
+
+OUTPUT_DIR = Path(__file__).resolve().parents[1] / "outputs"
 
 
 @dataclass(frozen=True)
@@ -167,9 +171,47 @@ def summarize(openmdao_results, aerosandbox_results, label):
         )
 
 
+def plot_evolution(openmdao_results, aerosandbox_results, output_path: Path):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    variables = [
+        ("P_bar", "Pressure [bar]"),
+        ("fill_level", "Fill level [-]"),
+        ("T_gas_K", "Ullage temperature [K]"),
+        ("T_liq_K", "Liquid temperature [K]"),
+        ("m_gas_kg", "Gas mass [kg]"),
+        ("m_liq_kg", "Liquid mass [kg]"),
+        ("Q_gas_W", "Gas-side heat leak [W]"),
+        ("Q_liq_W", "Liquid-side heat leak [W]"),
+    ]
+
+    fig, axes = plt.subplots(4, 2, figsize=(12, 13), sharex=True)
+    axes = axes.ravel()
+    for ax, (name, ylabel) in zip(axes, variables):
+        ax.plot(openmdao_results["time_hr"], openmdao_results[name], label="OpenMDAO", linewidth=2)
+        ax.plot(
+            aerosandbox_results["time_hr"],
+            aerosandbox_results[name],
+            "--",
+            label="AeroSandbox interpolants",
+            linewidth=2,
+        )
+        ax.set_ylabel(ylabel)
+        ax.grid(True, alpha=0.3)
+
+    for ax in axes[-2:]:
+        ax.set_xlabel("Time [hr]")
+    axes[0].legend(loc="best")
+    fig.suptitle("LNG Tank Transient Comparison")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+    return output_path
+
+
 def main():
     case = ComparisonCase()
     openmdao_results = run_openmdao(case)
+    interpolant_results = None
     backends = [
         ("local linear property fit", LNGSurrogateProperties()),
         ("CoolProp CasADi interpolants", CoolPropGridInterpolants()),
@@ -184,6 +226,17 @@ def main():
             print(f"FAILED: {type(exc).__name__}: {exc}")
             continue
         summarize(openmdao_results, aerosandbox_results, label)
+        if label == "CoolProp CasADi interpolants":
+            interpolant_results = aerosandbox_results
+
+    if interpolant_results is not None:
+        output_path = plot_evolution(
+            openmdao_results,
+            interpolant_results,
+            OUTPUT_DIR / "lng_openmdao_vs_aerosandbox_interpolants.png",
+        )
+        print()
+        print(f"Saved transient comparison plot: {output_path}")
 
 
 if __name__ == "__main__":
