@@ -11,7 +11,7 @@ setup(
     version=__version__,
     description="Liquid hydrogen tank modeling tool",
     license="MIT License",
-    packages=find_packages(include=["hytank*"]),
+    packages=find_packages(include=["hytank*", "lngtank*"]),
     package_data={"hytank": ["H2_property_data/*_properties.txt"]},
     install_requires=[
         "CoolProp>=7.1",

@@ -98,7 +98,7 @@ class LNGTank(om.Group):
         Initial fill level (in range 0-1) of the tank, default 0.95
         to leave space for boil-off gas; 5% adopted from Millis et al. 2009 (scalar, dimensionless)
     ullage_T_init : float
-        Initial temperature of gas in ullage, default 115 K (scalar, K)
+        Initial temperature of gas in ullage, default 120 K (scalar, K)
     ullage_P_init : float
         Initial pressure of gas in ullage, default 150,000 Pa; ullage pressure must be higher than ambient
         to prevent air leaking in and creating a combustible mixture (scalar, Pa)
@@ -140,7 +140,7 @@ class LNGTank(om.Group):
     def initialize(self):
         self.options.declare("num_nodes", default=1, desc="Number of design points to run")
         self.options.declare("fill_level_init", default=0.95, desc="Initial fill level")
-        self.options.declare("ullage_T_init", default=115.0, desc="Initial ullage temp (K)")
+        self.options.declare("ullage_T_init", default=120.0, desc="Initial ullage temp (K)")
         self.options.declare("ullage_P_init", default=1.5e5, desc="Initial ullage pressure (Pa)")
         self.options.declare("liquid_T_init", default=111.7, desc="Initial bulk liquid temp (K)")
         self.options.declare("heater_Q_add_init", default=0.0, types=float, desc="Initial heat input from heater")
@@ -276,7 +276,7 @@ class LNGTankThermals(om.Group):
         Initial fill level (in range 0-1) of the tank, default 0.95
         to leave space for boil-off gas; 5% adopted from Millis et al. 2009 (scalar, dimensionless)
     ullage_T_init : float
-        Initial temperature of gas in ullage, default 115 K (scalar, K)
+        Initial temperature of gas in ullage, default 120 K (scalar, K)
     ullage_P_init : float
         Initial pressure of gas in ullage, default 150,000 Pa; ullage pressure must be higher than ambient
         to prevent air leaking in and creating a combustible mixture (scalar, Pa)
@@ -296,7 +296,7 @@ class LNGTankThermals(om.Group):
     def initialize(self):
         self.options.declare("num_nodes", default=1, desc="Number of design points to run")
         self.options.declare("fill_level_init", default=0.95, desc="Initial fill level")
-        self.options.declare("ullage_T_init", default=115.0, desc="Initial ullage temp (K)")
+        self.options.declare("ullage_T_init", default=120.0, desc="Initial ullage temp (K)")
         self.options.declare("ullage_P_init", default=1.5e5, desc="Initial ullage pressure (Pa)")
         self.options.declare("liquid_T_init", default=111.7, desc="Initial bulk liquid temp (K)")
         self.options.declare("heat_multiplier", default=2.0, desc="Multiplier on heat leak")
@@ -342,8 +342,8 @@ class LNGTankThermals(om.Group):
         self.set_input_defaults("N_layers", 20)
         self.set_input_defaults("P_heater", np.zeros(nn), units="W")
         self.set_input_defaults("T_env", np.full(nn, 273), units="K")
-        self.set_input_defaults("T_liq", np.full(nn, 111.7), units="K")
-        self.set_input_defaults("T_gas", np.full(nn, 115.0), units="K")
+        self.set_input_defaults("T_liq", np.full(nn, self.options["liquid_T_init"]), units="K")
+        self.set_input_defaults("T_gas", np.full(nn, self.options["ullage_T_init"]), units="K")
 
 
 if __name__ == "__main__":
@@ -352,7 +352,15 @@ if __name__ == "__main__":
 
     p = om.Problem()
     p.model.add_subsystem(
-        "tank", LNGTank(num_nodes=nn, fill_level_init=0.9, ullage_P_init=3e5, ullage_T_init=115.0), promotes=["*"]
+        "tank",
+        LNGTank(
+            num_nodes=nn,
+            fill_level_init=0.9,
+            ullage_P_init=1.064e6,
+            ullage_T_init=151.8,
+            liquid_T_init=145.8,
+        ),
+        promotes=["*"],
     )
     p.model.nonlinear_solver = om.NewtonSolver(iprint=2, solve_subsystems=True, maxiter=5)
     p.model.linear_solver = om.DirectSolver()
@@ -362,13 +370,13 @@ if __name__ == "__main__":
     p.set_val("thermals.boil_off.integ.duration", duration, units="h")
     p.set_val("radius", 2.75, units="m")
     p.set_val("length", 2.0, units="m")
-    p.set_val("P_heater", 8000.0, units="W")
+    p.set_val("P_heater", 1000.0, units="W")
     p.set_val("m_dot_gas_out", 0.0, units="kg/h")
     p.set_val("m_dot_liq_out", 700.0, units="kg/h")
-    p.set_val("T_env", 300, units="K")
+    p.set_val("T_env", 350, units="K")
     p.set_val("N_layers", 20)
     p.set_val("environment_design_pressure", 1, units="atm")
-    p.set_val("max_expected_operating_pressure", 3, units="bar")
+    p.set_val("max_expected_operating_pressure", 10.64, units="bar")
     p.set_val("vacuum_gap", 0.1, units="m")
 
     p.run_model()

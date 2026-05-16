@@ -51,3 +51,15 @@ hytank/utilities/add_subtract_comp.py
 hytank/utilities/constants.py
 hytank/utilities/integrals.py
 hytank/utilities/multiply_divide_comp.py
+lngtank/LNG_properties.py
+lngtank/LNG_properties_MendezRamos.py
+lngtank/LNG_tank.py
+lngtank/__init__.py
+lngtank/boil_off.py
+lngtank/heat_leak.py
+lngtank/weight.py
+lngtank/utilities/__init__.py
+lngtank/utilities/add_subtract_comp.py
+lngtank/utilities/constants.py
+lngtank/utilities/integrals.py
+lngtank/utilities/multiply_divide_comp.py

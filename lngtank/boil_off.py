@@ -98,7 +98,7 @@ class BoilOff(om.Group):
         Initial fill level (in range 0-1) of the tank, default 0.95
         to leave space for boil-off gas; 5% adopted from Millis et al. 2009 (scalar, dimensionless)
     ullage_T_init : float
-        Initial temperature of gas in ullage, default 115 K (scalar, K)
+        Initial temperature of gas in ullage, default 120 K (scalar, K)
     ullage_P_init : float
         Initial pressure of gas in ullage, default 150,000 Pa; ullage pressure must be higher than ambient
         to prevent air leaking in and creating a combustible mixture (scalar, Pa)
@@ -115,7 +115,7 @@ class BoilOff(om.Group):
     def initialize(self):
         self.options.declare("num_nodes", default=1, desc="Number of design points to run")
         self.options.declare("fill_level_init", default=0.95, desc="Initial fill level")
-        self.options.declare("ullage_T_init", default=115.0, desc="Initial ullage temp (K)")
+        self.options.declare("ullage_T_init", default=120.0, desc="Initial ullage temp (K)")
         self.options.declare("ullage_P_init", default=1.5e5, desc="Initial ullage pressure (Pa)")
         self.options.declare("liquid_T_init", default=111.7, desc="Initial bulk liquid temp (K)")
         self.options.declare(
@@ -2466,7 +2466,7 @@ class InitialTankStateModification(om.ExplicitComponent):
         Initial fill level (in range 0-1) of the tank, default 0.95
         to leave space for boil-off gas; 5% adopted from Millis et al. 2009 (scalar, dimensionless)
     ullage_T_init : float
-        Initial temperature of gas in ullage, default 115 K (scalar, K)
+        Initial temperature of gas in ullage, default 120 K (scalar, K)
     ullage_P_init : float
         Initial pressure of gas in ullage, default 150,000 Pa; ullage pressure must be higher than ambient
         to prevent air leaking in and creating a combustible mixture (scalar, Pa)
@@ -2487,7 +2487,7 @@ class InitialTankStateModification(om.ExplicitComponent):
     def initialize(self):
         self.options.declare("num_nodes", default=1, desc="Number of design points to run")
         self.options.declare("fill_level_init", default=0.95, desc="Initial fill level")
-        self.options.declare("ullage_T_init", default=115.0, desc="Initial ullage temp (K)")
+        self.options.declare("ullage_T_init", default=120.0, desc="Initial ullage temp (K)")
         self.options.declare("ullage_P_init", default=1.5e5, desc="Initial ullage pressure (Pa)")
         self.options.declare("liquid_T_init", default=111.7, desc="Initial bulk liquid temp (K)")
         self.options.declare(
@@ -2517,8 +2517,8 @@ class InitialTankStateModification(om.ExplicitComponent):
         defaults = self._compute_initial_states(r_default, L_default, self.options)
         self.add_output("m_gas", shape=(nn,), units="kg", lower=1e-6, val=defaults["m_gas_init"], upper=1e4)
         self.add_output("m_liq", shape=(nn,), units="kg", lower=1e-2, val=defaults["m_liq_init"], upper=1e6)
-        self.add_output("T_gas", shape=(nn,), units="K", lower=18, val=defaults["T_gas_init"], upper=150)
-        self.add_output("T_liq", shape=(nn,), units="K", lower=14, val=defaults["T_liq_init"], upper=33)
+        self.add_output("T_gas", shape=(nn,), units="K", lower=92, val=defaults["T_gas_init"], upper=300)
+        self.add_output("T_liq", shape=(nn,), units="K", lower=90, val=defaults["T_liq_init"], upper=190)
         self.add_output("V_gas", shape=(nn,), units="m**3", lower=1e-5, val=defaults["V_gas_init"], upper=1e4)
 
         arng = np.arange(nn)
@@ -2598,3 +2598,39 @@ class InitialTankStateModification(om.ExplicitComponent):
         res["m_liq_init"] = (V_tank - res["V_gas_init"]) * self.LNG.lng_rho(T_liq_init)
 
         return res
+
+
+if __name__ == "__main__":
+    duration = 1.0  # hr
+    nn = 11
+
+    p = om.Problem()
+    p.model.add_subsystem(
+        "model",
+        BoilOff(
+            num_nodes=nn,
+            fill_level_init=0.9,
+            ullage_P_init=1.5e5,
+            ullage_T_init=120.0,
+            liquid_T_init=111.7,
+        ),
+        promotes=["*"],
+    )
+
+    p.setup()
+
+    p.set_val("integ.duration", duration, units="h")
+    p.set_val("radius", 2.0, units="m")
+    p.set_val("length", 2.0, units="m")
+    p.set_val("Q_gas", 2.0, units="W")
+    p.set_val("Q_liq", 20.0, units="W")
+    p.set_val("P_heater", 0.0, units="W")
+    p.set_val("m_dot_gas_out", 0.0, units="kg/h")
+    p.set_val("m_dot_liq_out", 100.0, units="kg/h")
+
+    p.run_model()
+
+    om.n2(p)
+
+    p.model.list_inputs(units=True, print_arrays=True)
+    p.model.list_outputs(units=True, print_arrays=True)

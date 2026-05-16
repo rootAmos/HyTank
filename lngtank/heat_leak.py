@@ -242,8 +242,8 @@ if __name__ == "__main__":
     p.set_val("A_wet", SA * wet_frac, units="m**2")
     p.set_val("A_dry", SA * (1 - wet_frac), units="m**2")
     p.set_val("T_env", 300, units="K")
-    p.set_val("T_liq", 21, units="K")
-    p.set_val("T_gas", 25, units="K")
+    p.set_val("T_liq", 111.7, units="K")
+    p.set_val("T_gas", 120.0, units="K")
 
     p.run_model()
 
