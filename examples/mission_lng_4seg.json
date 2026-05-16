@@ -1,0 +1,108 @@
+{
+  "mission_name": "lng_4_segment_coupled_demo",
+  "units": {
+    "altitude": "m",
+    "distance": "m",
+    "speed": "m/s",
+    "time": "s",
+    "angle": "deg",
+    "power": "fraction"
+  },
+  "num_nodes": 61,
+  "duration_s": 2400.0,
+  "range_m": 170000.0,
+  "initial": {
+    "altitude_m": 0.0,
+    "speed_m_s": 78.0
+  },
+  "final": {
+    "altitude_m": 0.0,
+    "speed_m_s": 78.0
+  },
+  "segments": [
+    {
+      "name": "climb_1_fixed_speed_angle",
+      "segment_type": "climb",
+      "end": {
+        "condition": "altitude",
+        "node_fraction": 0.18,
+        "altitude_m": 1200.0,
+        "speed_m_s": 76.0,
+        "gamma_deg": 0.0
+      },
+      "constraints": {
+        "min": {
+          "speed_m_s": 72.0,
+          "power_fraction": 0.55
+        },
+        "max": {
+          "speed_m_s": 82.0,
+          "power_fraction": 1.0
+        }
+      }
+    },
+    {
+      "name": "climb_2_free_speed_above_min",
+      "segment_type": "climb",
+      "end": {
+        "condition": "altitude",
+        "node_fraction": 0.35,
+        "altitude_m": 2500.0,
+        "gamma_deg": 0.0
+      },
+      "constraints": {
+        "min": {
+          "speed_m_s": 68.0,
+          "power_fraction": 0.25
+        },
+        "max": {
+          "speed_m_s": 88.0,
+          "power_fraction": 1.0
+        }
+      }
+    },
+    {
+      "name": "cruise_fixed_speed_altitude",
+      "segment_type": "cruise",
+      "end": {
+        "condition": "distance",
+        "node_fraction": 0.75,
+        "distance_m": 127500.0,
+        "altitude_m": 2500.0,
+        "speed_m_s": 72.0,
+        "gamma_deg": 0.0
+      },
+      "constraints": {
+        "fix": {
+          "altitude_m": 2500.0
+        },
+        "min": {
+          "speed_m_s": 68.0
+        },
+        "max": {
+          "speed_m_s": 78.0
+        }
+      }
+    },
+    {
+      "name": "descent_fixed_speed_angle",
+      "segment_type": "descent",
+      "end": {
+        "condition": "distance",
+        "distance_m": 170000.0,
+        "altitude_m": 0.0,
+        "speed_m_s": 78.0,
+        "gamma_deg": 0.0
+      },
+      "constraints": {
+        "min": {
+          "speed_m_s": 68.0
+        },
+        "max": {
+          "speed_m_s": 82.0,
+          "power_fraction": 0.5
+        }
+      }
+    }
+  ]
+}
