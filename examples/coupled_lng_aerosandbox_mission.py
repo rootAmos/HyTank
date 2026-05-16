@@ -78,7 +78,11 @@ def build_coupled_problem(
     mission: MissionSpec = MissionSpec(),
     aircraft: AircraftModel = AircraftModel(),
     tank_design: TankDesign = TankDesign(radius=1.15, length=2.5, n_layers=20.0, heat_multiplier=2.0),
+    mode: str = "segmented",
 ):
+    if mode not in {"segmented", "free"}:
+        raise ValueError("mode must be either 'segmented' or 'free'")
+
     props = CoolPropGridInterpolants()
     opti = asb.Opti()
 
@@ -105,13 +109,14 @@ def build_coupled_problem(
     v_guess = onp.full(n, mission.initial_speed)
     gamma_guess = onp.gradient(z_guess, time) / mission.initial_speed
     fuel_guess = onp.linspace(0.0, 140.0, n)
+    altitude_upper_bound = mission.cruise_altitude if mode == "segmented" else 1.8 * mission.cruise_altitude
 
     x = opti.variable(init_guess=x_guess, n_vars=n, lower_bound=0.0, scale=mission.range)
-    z = opti.variable(
-        init_guess=z_guess,
+    z_e = opti.variable(
+        init_guess=-z_guess,
         n_vars=n,
-        lower_bound=0.0,
-        upper_bound=mission.cruise_altitude,
+        lower_bound=-altitude_upper_bound,
+        upper_bound=0.0,
         scale=mission.cruise_altitude,
     )
     v = opti.variable(init_guess=v_guess, n_vars=n, lower_bound=45.0, upper_bound=125.0, scale=mission.initial_speed)
@@ -145,11 +150,14 @@ def build_coupled_problem(
     q_add = opti.variable(init_guess=0.0, n_vars=n, lower_bound=0.0, scale=mission.p_heater)
     h_liq_frac = opti.variable(init_guess=mission.initial_fill, n_vars=n, lower_bound=1e-3, upper_bound=1 - 1e-3)
 
-    opti.subject_to([x[0] == 0.0, x[-1] == mission.range])
-    opti.subject_to([z[0] == 0.0, z[climb_end] == mission.cruise_altitude, z[descent_start] == mission.cruise_altitude, z[-1] == 0.0])
-    opti.subject_to(z[climb_end : descent_start + 1] == mission.cruise_altitude)
-    opti.subject_to([v[0] == mission.initial_speed, v[-1] == mission.final_speed])
-    opti.subject_to([gamma[0] == 0.0, gamma[climb_end] == 0.0, gamma[descent_start] == 0.0, gamma[-1] == 0.0])
+    mass = aircraft.dry_mass + aircraft.tank_hardware_mass + m_gas + m_liq
+    dyn = asb.DynamicsPointMass2DSpeedGamma(
+        mass_props=asb.MassProperties(mass=mass),
+        x_e=x,
+        z_e=z_e,
+        speed=v,
+        gamma=gamma,
+    )
 
     opti.subject_to(
         [
@@ -162,46 +170,55 @@ def build_coupled_problem(
         ]
     )
 
-    states = [x, z, v, gamma, m_gas, m_liq, t_gas, t_liq, v_gas, q_add]
-    rhs = []
-    aux = {key: [] for key in ["pressure", "fill_level", "m_dot_fuel", "mass", "q_gas", "q_liq", "t_env"]}
+    opti.subject_to(
+        [
+            dyn.x_e[0] == 0.0,
+            dyn.x_e[-1] == mission.range,
+            dyn.altitude[0] == 0.0,
+            dyn.altitude[-1] == 0.0,
+            dyn.speed[0] == mission.initial_speed,
+            dyn.speed[-1] == mission.final_speed,
+            dyn.gamma[0] == 0.0,
+            dyn.gamma[-1] == 0.0,
+        ]
+    )
+    if mode == "segmented":
+        opti.subject_to(
+            [
+                dyn.altitude[climb_end] == mission.cruise_altitude,
+                dyn.altitude[climb_end : descent_start + 1] == mission.cruise_altitude,
+                dyn.gamma[climb_end] == 0.0,
+                dyn.gamma[descent_start] == 0.0,
+            ]
+        )
 
     rho0 = float(asb.Atmosphere(altitude=0.0).density())
+    rho = dyn.op_point.atmosphere.density()
+    t_env = dyn.op_point.atmosphere.temperature()
+    density_ratio = rho / rho0
+    q_dyn = dyn.op_point.dynamic_pressure()
     induced_factor = 1 / (np.pi * aircraft.aspect_ratio * aircraft.oswald_efficiency)
+    cd = aircraft.cd0 + induced_factor * cl**2
+    lift = q_dyn * aircraft.wing_area * cl
+    drag = q_dyn * aircraft.wing_area * cd
+    shaft_power = throttle * aircraft.max_sea_level_shaft_power * density_ratio**0.8
+    thrust = aircraft.propeller_efficiency * shaft_power / dyn.speed
+    m_dot_fuel = aircraft.psfc * shaft_power
 
-    def node_rhs(k):
-        atmosphere = asb.Atmosphere(altitude=z[k])
-        op_point = asb.OperatingPoint(
-            atmosphere=atmosphere,
-            velocity=v[k],
-            alpha=0.0,
-        )
-        dynamics = asb.DynamicsPointMass2DSpeedGamma(
-            mass_props=asb.MassProperties(
-                mass=aircraft.dry_mass + aircraft.tank_hardware_mass + m_gas[k] + m_liq[k],
-            ),
-            x_e=x[k],
-            z_e=z[k],
-            speed=v[k],
-            gamma=gamma[k],
-        )
+    dyn.add_gravity_force(g=G)
+    dyn.add_force(Fx=thrust - drag, Fz=-lift, axes="wind")
+    dyn.constrain_derivatives(opti, time)
 
-        t_env = atmosphere.temperature()
-        rho = atmosphere.density()
-        density_ratio = rho / rho0
-        q_dyn = op_point.dynamic_pressure()
-        cd = aircraft.cd0 + induced_factor * cl[k] ** 2
-        lift = q_dyn * aircraft.wing_area * cl[k]
-        drag = q_dyn * aircraft.wing_area * cd
-        shaft_power = throttle[k] * aircraft.max_sea_level_shaft_power * density_ratio**0.8
-        thrust = aircraft.propeller_efficiency * shaft_power / v[k]
-        m_dot_fuel = aircraft.psfc * shaft_power
+    tank_states = [m_gas, m_liq, t_gas, t_liq, v_gas, q_add]
+    tank_rhs_values = []
+    aux = {key: [] for key in ["pressure", "fill_level", "m_dot_fuel", "mass", "q_gas", "q_liq", "t_env"]}
 
+    for k in range(n):
         tank_inputs = MissionInputs(
             duration=mission.duration,
-            t_env=t_env,
+            t_env=t_env[k],
             p_heater=mission.p_heater,
-            m_dot_liq_out=m_dot_fuel,
+            m_dot_liq_out=m_dot_fuel[k],
             m_dot_gas_out=0.0,
         )
         tank_f, tank_aux = tank_rhs(
@@ -211,30 +228,15 @@ def build_coupled_problem(
             props,
             h_liq_frac=h_liq_frac[k],
         )
-
-        dynamics.add_force(Fx=thrust - drag, Fz=-lift, axes="wind")
-        dynamics.add_gravity_force(g=G)
-        state_derivatives = dynamics.state_derivatives()
-        mass = dynamics.mass_props.mass
+        tank_rhs_values.append(tank_f)
 
         aux["pressure"].append(tank_aux["pressure"])
         aux["fill_level"].append(tank_aux["fill_level"])
-        aux["m_dot_fuel"].append(m_dot_fuel)
-        aux["mass"].append(mass)
+        aux["m_dot_fuel"].append(m_dot_fuel[k])
+        aux["mass"].append(mass[k])
         aux["q_gas"].append(tank_aux["q_gas"])
         aux["q_liq"].append(tank_aux["q_liq"])
-        aux["t_env"].append(t_env)
-        return [
-            state_derivatives["x_e"],
-            state_derivatives["z_e"],
-            state_derivatives["speed"],
-            state_derivatives["gamma"],
-            *tank_f,
-        ]
-
-    for k in range(n):
-        rhs_k = node_rhs(k)
-        rhs.append(rhs_k)
+        aux["t_env"].append(t_env[k])
 
         opti.subject_to(aux["pressure"][k] <= mission.initial_pressure)
         opti.subject_to(aux["pressure"][k] >= 2.0e5)
@@ -246,8 +248,10 @@ def build_coupled_problem(
         )
 
     for k in range(n - 1):
-        for i, state in enumerate(states):
-            opti.subject_to(state[k + 1] - state[k] == 0.5 * dt * (rhs[k][i] + rhs[k + 1][i]))
+        for i, state in enumerate(tank_states):
+            opti.subject_to(
+                state[k + 1] - state[k] == 0.5 * dt * (tank_rhs_values[k][i] + tank_rhs_values[k + 1][i])
+            )
         opti.subject_to(throttle[k + 1] - throttle[k] <= 0.12)
         opti.subject_to(throttle[k + 1] - throttle[k] >= -0.12)
         opti.subject_to(cl[k + 1] - cl[k] <= 0.12)
@@ -265,11 +269,12 @@ def build_coupled_problem(
     return {
         "opti": opti,
         "time": time,
+        "mode": mode,
         "states": {
-            "x": x,
-            "z": z,
-            "V": v,
-            "gamma": gamma,
+            "x": dyn.x_e,
+            "altitude": dyn.altitude,
+            "V": dyn.speed,
+            "gamma": dyn.gamma,
             "m_gas": m_gas,
             "m_liq": m_liq,
             "T_gas": t_gas,
@@ -290,7 +295,7 @@ def plot_solution(problem, sol, output_path):
     aux = problem["aux"]
 
     values = {
-        "altitude_m": onp.array(sol.value(states["z"])),
+        "altitude_m": onp.array(sol.value(states["altitude"])),
         "range_km": onp.array(sol.value(states["x"])) / 1000,
         "speed_m_s": onp.array(sol.value(states["V"])),
         "throttle": onp.array(sol.value(states["throttle"])),
@@ -328,26 +333,33 @@ def plot_solution(problem, sol, output_path):
 
     for ax in axes[-2:]:
         ax.set_xlabel("Time [min]")
-    fig.suptitle("Coupled LNG Tank and AeroSandbox Mission")
+    fig.suptitle(f"Coupled LNG Tank and AeroSandbox Mission ({problem['mode']})")
     fig.tight_layout()
     fig.savefig(output_path, dpi=200)
     plt.close(fig)
     return values
 
 
-def main():
-    problem = build_coupled_problem()
+def run_case(mode: str):
+    problem = build_coupled_problem(mode=mode)
     sol = problem["opti"].solve(verbose=False)
-    output_path = OUTPUT_DIR / "lng_coupled_aerosandbox_mission.png"
+    output_path = OUTPUT_DIR / f"lng_coupled_aerosandbox_mission_{mode}.png"
     values = plot_solution(problem, sol, output_path)
 
     fuel_used = values["mass_kg"][0] - values["mass_kg"][-1]
-    print("Coupled LNG AeroSandbox mission solved")
+    print(f"Coupled LNG AeroSandbox mission solved ({mode})")
     print(f"Final range: {values['range_km'][-1]:.1f} km")
     print(f"Fuel and boil-off mass reduction: {fuel_used:.2f} kg")
     print(f"Final tank pressure: {values['pressure_bar'][-1]:.3f} bar")
     print(f"Final fill level: {values['fill_level'][-1]:.4f}")
     print(f"Saved plot: {output_path}")
+    return problem, sol, values
+
+
+def main():
+    for mode in ("segmented", "free"):
+        run_case(mode)
+        print()
 
 
 if __name__ == "__main__":
