@@ -18,7 +18,6 @@ from lngtank.asb_properties_interpolants import CoolPropGridInterpolants
 from lngtank.aerosandbox_tank import (
     InitialState,
     LNGSurrogateProperties,
-    MendezRamosProperties,
     MissionInputs,
     TankDesign,
     build_trajectory_problem,
@@ -168,32 +167,15 @@ def summarize(openmdao_results, aerosandbox_results, label):
         )
 
 
-def preflight_backend(case: ComparisonCase, props):
-    t_sat = float(props.sat_gas_T(case.ullage_pressure_init))
-    h_liq = float(props.liquid_h(case.liquid_temperature_init))
-    if not 90.0 <= t_sat <= 190.0:
-        return f"initial saturation temperature is {t_sat:.3f} K"
-    if abs(h_liq) > 1.0e7:
-        return f"initial liquid enthalpy magnitude is {h_liq:.6g} J/kg"
-    return None
-
-
 def main():
     case = ComparisonCase()
     openmdao_results = run_openmdao(case)
     backends = [
         ("local linear property fit", LNGSurrogateProperties()),
-        ("Mendez-Ramos equations", MendezRamosProperties()),
         ("CoolProp CasADi interpolants", CoolPropGridInterpolants()),
     ]
     for label, props in backends:
         print()
-        preflight_error = preflight_backend(case, props)
-        if preflight_error is not None:
-            print(f"LNG Tank OpenMDAO vs AeroSandbox ({label})")
-            print("=" * 72)
-            print(f"FAILED PREFLIGHT: {preflight_error}")
-            continue
         try:
             aerosandbox_results = run_aerosandbox(case, props=props)
         except Exception as exc:

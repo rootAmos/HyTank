@@ -12,8 +12,6 @@ import aerosandbox as asb
 import aerosandbox.numpy as np
 import numpy as onp
 
-from lngtank import asb_properties_mendez_ramos as mr
-
 GRAV_CONST = 9.80665
 UNIVERSAL_GAS_CONST = 8.3145
 MOLEC_WEIGHT_LNG = 16.0425e-3
@@ -108,74 +106,6 @@ class LNGSurrogateProperties:
 
     def sat_gas_rho(self, T_sat):
         return self.linear_1d(16.707497068001675, 0.757246780857093, T_sat, self.t_sat_ref)
-
-
-@dataclass(frozen=True)
-class MendezRamosProperties:
-    """CasADi-compatible wrapper around LNG_properties_MendezRamos equations."""
-
-    def liquid_density(self, T_liq):
-        return mr.lng_rho(T_liq)
-
-    def gas_density(self, P, T_gas):
-        return mr.gng_rho(P, T_gas)
-
-    def gas_pressure(self, m_gas, v_gas, T_gas):
-        return mr.gng_P(m_gas / v_gas, T_gas)
-
-    def gas_h(self, P, T_gas):
-        return mr.gng_h(P, T_gas)
-
-    def gas_u(self, P, T_gas):
-        return mr.gng_u(P, T_gas)
-
-    def gas_cv(self, P, T_gas):
-        return mr.gng_cv(P, T_gas)
-
-    def liquid_h(self, T_liq):
-        return mr.lng_h(T_liq)
-
-    def liquid_u(self, T_liq):
-        return mr.lng_u(T_liq)
-
-    def liquid_cp_value(self, T_liq):
-        return mr.lng_cp(T_liq)
-
-    def liquid_pressure(self, T_liq):
-        return mr.lng_P(T_liq)
-
-    def liquid_pressure_dT(self, T_liq):
-        return mr.lng_P(T_liq, deriv=True)
-
-    def liquid_beta_value(self, T_liq):
-        return mr.lng_beta(T_liq)
-
-    def liquid_viscosity(self, T_liq):
-        return mr.lng_viscosity(T_liq)
-
-    def liquid_k(self, T_liq):
-        return mr.lng_k(T_liq)
-
-    def sat_gas_T(self, P):
-        return mr.sat_gng_T(P)
-
-    def sat_gas_T_dP(self, P):
-        return mr.sat_gng_T(P, deriv=True)
-
-    def sat_gas_cp(self, T_sat):
-        return mr.sat_gng_cp(T_sat)
-
-    def sat_gas_viscosity(self, T_sat):
-        return mr.sat_gng_viscosity(T_sat)
-
-    def sat_gas_k(self, T_sat):
-        return mr.sat_gng_k(T_sat)
-
-    def sat_gas_beta(self, T_sat):
-        return mr.sat_gng_beta(T_sat)
-
-    def sat_gas_rho(self, T_sat):
-        return mr.sat_gng_rho(T_sat)
 
 
 @dataclass(frozen=True)
