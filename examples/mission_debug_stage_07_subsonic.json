@@ -1,0 +1,176 @@
+{
+  "mission_name": "debug_subsonic_stage_07",
+  "units": {
+    "altitude": "m",
+    "distance": "m",
+    "speed": "m/s",
+    "time": "s",
+    "angle": "deg",
+    "power": "fraction"
+  },
+  "num_nodes": 71,
+  "duration_guess_s": 2862.8,
+  "duration_bounds_s": [
+    1860.8,
+    5153.0
+  ],
+  "range_m": 446846.9,
+  "initial": {
+    "altitude_m": 0.0,
+    "speed_m_s": 84.6
+  },
+  "final": {
+    "altitude_m": 457.2,
+    "speed_m_s": 84.6
+  },
+  "segments": [
+    {
+      "name": "subsonic_climb",
+      "segment_type": "climb",
+      "end": {
+        "condition": "altitude",
+        "num_nodes": 11,
+        "altitude_m": 1500.0,
+        "speed_m_s": 120.0
+      },
+      "constraints": {
+        "min": {
+          "gamma_deg": 0.0,
+          "gamma_rate_deg_s": -0.08
+        },
+        "max": {
+          "gamma_deg": 10.0,
+          "gamma_rate_deg_s": 0.08
+        }
+      }
+    },
+    {
+      "name": "transonic_acceleration_climb",
+      "segment_type": "accelerating_climb",
+      "end": {
+        "condition": "altitude",
+        "num_nodes": 11,
+        "altitude_m": 3000.0,
+        "speed_m_s": 160.0
+      },
+      "constraints": {
+        "min": {
+          "gamma_deg": 0.0,
+          "gamma_rate_deg_s": -0.08
+        },
+        "max": {
+          "gamma_deg": 10.0,
+          "gamma_rate_deg_s": 0.08
+        }
+      }
+    },
+    {
+      "name": "mach2_acceleration_climb",
+      "segment_type": "accelerating_climb",
+      "end": {
+        "condition": "altitude",
+        "num_nodes": 11,
+        "altitude_m": 4500.0,
+        "speed_m_s": 180.0556
+      },
+      "constraints": {
+        "min": {
+          "gamma_deg": 0.0,
+          "gamma_rate_deg_s": -0.08
+        },
+        "max": {
+          "gamma_deg": 10.0,
+          "gamma_rate_deg_s": 0.08
+        }
+      }
+    },
+    {
+      "name": "mach3_acceleration_climb",
+      "segment_type": "accelerating_climb",
+      "end": {
+        "condition": "altitude",
+        "num_nodes": 11,
+        "altitude_m": 6000.0,
+        "speed_m_s": 180.0556
+      },
+      "constraints": {
+        "min": {
+          "gamma_deg": 0.0,
+          "gamma_rate_deg_s": -0.08
+        },
+        "max": {
+          "gamma_deg": 10.0,
+          "gamma_rate_deg_s": 0.08
+        }
+      }
+    },
+    {
+      "name": "mach3_cruise_climb",
+      "segment_type": "cruise_climb",
+      "end": {
+        "condition": "altitude",
+        "num_nodes": 11,
+        "altitude_m": 7500.0,
+        "speed_m_s": 180.0556,
+        "gamma_deg": 0.0
+      },
+      "constraints": {
+        "min": {
+          "gamma_deg": 0.0,
+          "gamma_rate_deg_s": -0.08
+        },
+        "max": {
+          "gamma_deg": 10.0,
+          "gamma_rate_deg_s": 0.08
+        }
+      }
+    },
+    {
+      "name": "descent_deceleration",
+      "segment_type": "descent",
+      "end": {
+        "condition": "altitude",
+        "num_nodes": 11,
+        "altitude_m": 3000.0,
+        "speed_m_s": 170.0
+      },
+      "constraints": {}
+    },
+    {
+      "name": "terminal_approach",
+      "segment_type": "approach",
+      "end": {
+        "condition": "altitude",
+        "num_nodes": 11,
+        "altitude_m": 457.2,
+        "speed_m_s": 84.6
+      },
+      "constraints": {}
+    }
+  ],
+  "aircraft_model": {
+    "max_sea_level_shaft_power": 5000000.0,
+    "power_lapse_exponent": 0.0,
+    "psfc": 7.6e-08
+  },
+  "solver": {
+    "max_accel_m_s2": 3.0,
+    "max_gamma_rate_deg_s": 0.08,
+    "constrain_speed_rate": false,
+    "constrain_gamma_rate": false,
+    "min_lift_coefficient": 0.005,
+    "max_lift_coefficient": 1.7,
+    "min_power_fraction": 0.0,
+    "max_throttle_rate_per_s": 0.05,
+    "lift_coefficient_step_limit": 0.5
+  },
+  "tank": {
+    "p_heater_w": 1000.0,
+    "initial_fill": 0.82,
+    "initial_pressure_pa": 1064000.0,
+    "initial_gas_temperature_k": 151.8,
+    "initial_liquid_temperature_k": 145.8
+  },
+  "range_guess_m": 446846.9,
+  "duration_s": null
+}
