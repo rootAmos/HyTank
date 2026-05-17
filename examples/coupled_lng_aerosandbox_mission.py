@@ -32,6 +32,13 @@ from lngtank.asb_properties_interpolants import CoolPropGridInterpolants
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "outputs"
 DEFAULT_SCHEDULE_PATH = Path(__file__).resolve().parent / "mission_lng_4seg.json"
 G = 9.80665
+M_TO_FT = 3.280839895
+MPS_TO_KT = 1.943844492
+M_TO_NMI = 1 / 1852.0
+KG_TO_LBM = 2.2046226218
+KGPS_TO_LBHR = KG_TO_LBM * 3600.0
+PA_TO_PSIA = 1 / 6894.757293
+K_TO_R = 1.8
 
 
 @dataclass(frozen=True)
@@ -58,7 +65,7 @@ class MissionSpec:
     initial_speed: float = 78.0  # m/s
     final_speed: float = 78.0  # m/s
     max_accel: float = 2.0  # m/s^2
-    max_gamma_rate: float = 0.2  # rad/s
+    max_gamma_rate: float = onp.radians(0.05)  # rad/s, 0.05 deg/s
     p_heater: float = 1000.0  # W
     initial_fill: float = 0.82
     initial_pressure: float = 1.064e6  # Pa
@@ -117,13 +124,15 @@ class MissionSegment:
 @dataclass(frozen=True)
 class MissionSchedule:
     mission_name: str
-    duration_s: float
+    duration_s: float | None
+    duration_guess_s: float
+    duration_bounds_s: tuple[float, float] | None
     range_m: float
     num_nodes: int
     initial_altitude_m: float
     initial_speed_m_s: float
     final_altitude_m: float
-    final_speed_m_s: float
+    final_speed_m_s: float | None
     segments: tuple[MissionSegment, ...]
 
     @classmethod
@@ -132,15 +141,22 @@ class MissionSchedule:
             data = json.load(stream)
         initial = data.get("initial", {})
         final = data.get("final", {})
+        duration_s = data.get("duration_s")
+        duration_guess_s = data.get("duration_guess_s", duration_s)
+        if duration_guess_s is None:
+            raise ValueError("Schedule must define either duration_s or duration_guess_s.")
+        duration_bounds_s = data.get("duration_bounds_s")
         return cls(
             mission_name=data.get("mission_name", Path(path).stem),
-            duration_s=float(data["duration_s"]),
+            duration_s=float(duration_s) if duration_s is not None else None,
+            duration_guess_s=float(duration_guess_s),
+            duration_bounds_s=tuple(float(value) for value in duration_bounds_s) if duration_bounds_s else None,
             range_m=float(data["range_m"]),
             num_nodes=int(data.get("num_nodes", 61)),
             initial_altitude_m=float(initial.get("altitude_m", 0.0)),
             initial_speed_m_s=float(initial["speed_m_s"]),
             final_altitude_m=float(final.get("altitude_m", 0.0)),
-            final_speed_m_s=float(final["speed_m_s"]),
+            final_speed_m_s=float(final["speed_m_s"]) if "speed_m_s" in final else None,
             segments=tuple(MissionSegment.from_dict(segment) for segment in data["segments"]),
         )
 
@@ -162,7 +178,7 @@ def smooth_piecewise_altitude(time, duration, cruise_altitude):
 def schedule_to_mission_spec(schedule: MissionSchedule, base: MissionSpec = MissionSpec()):
     return MissionSpec(
         num_nodes=schedule.num_nodes,
-        duration=schedule.duration_s,
+        duration=schedule.duration_guess_s,
         range=schedule.range_m,
         cruise_altitude=max(
             [base.cruise_altitude]
@@ -171,7 +187,7 @@ def schedule_to_mission_spec(schedule: MissionSchedule, base: MissionSpec = Miss
         cruise_speed=base.cruise_speed,
         end_of_cruise_range_fraction=base.end_of_cruise_range_fraction,
         initial_speed=schedule.initial_speed_m_s,
-        final_speed=schedule.final_speed_m_s,
+        final_speed=schedule.final_speed_m_s if schedule.final_speed_m_s is not None else base.final_speed,
         max_accel=base.max_accel,
         max_gamma_rate=base.max_gamma_rate,
         p_heater=base.p_heater,
@@ -208,9 +224,13 @@ def segment_end_indices(schedule: MissionSchedule, time):
     return end_indices
 
 
-def apply_value_constraint(opti, dyn, throttle, key, selection, value, equality=True):
+def apply_value_constraint(opti, dyn, throttle, key, selection, value, equality=True, rho=None, rho0=None):
     if key in {"speed_m_s", "speed"}:
         expr = dyn.speed[selection]
+    elif key in {"equivalent_speed_m_s", "eas_m_s", "eas"}:
+        if rho is None or rho0 is None:
+            raise ValueError("Equivalent airspeed constraints require atmosphere density.")
+        expr = dyn.speed[selection] * (rho[selection] / rho0) ** 0.5
     elif key in {"altitude_m", "altitude"}:
         expr = dyn.altitude[selection]
     elif key in {"distance_m", "range_m", "x_m", "x_e"}:
@@ -229,17 +249,30 @@ def apply_value_constraint(opti, dyn, throttle, key, selection, value, equality=
         return expr, value
 
 
-def apply_schedule_constraints(opti, dyn, throttle, schedule: MissionSchedule, time):
+def segment_constraint_slice(key, start, end_index):
+    first_index = start if start == 0 and key in {"power_fraction", "throttle"} else start + 1
+    return slice(first_index, end_index + 1)
+
+
+def segment_plot_label(segment, index):
+    segment_type = segment.segment_type.replace("_", " ").strip()
+    if segment_type == "climb":
+        return f"climb {index + 1}"
+    return segment_type or f"segment {index + 1}"
+
+
+def apply_schedule_constraints(opti, dyn, throttle, schedule: MissionSchedule, time, rho=None, rho0=None):
     end_indices = segment_end_indices(schedule, time)
     opti.subject_to(
         [
             dyn.altitude[0] == schedule.initial_altitude_m,
             dyn.speed[0] == schedule.initial_speed_m_s,
             dyn.altitude[-1] == schedule.final_altitude_m,
-            dyn.speed[-1] == schedule.final_speed_m_s,
             dyn.x_e[-1] == schedule.range_m,
         ]
     )
+    if schedule.final_speed_m_s is not None:
+        opti.subject_to(dyn.speed[-1] == schedule.final_speed_m_s)
 
     start = 0
     for segment, end_index in zip(schedule.segments, end_indices):
@@ -254,19 +287,49 @@ def apply_schedule_constraints(opti, dyn, throttle, schedule: MissionSchedule, t
         if end.gamma_deg is not None:
             opti.subject_to(dyn.gamma[endpoint] == onp.radians(end.gamma_deg))
 
-        path_start = start + 1 if start > 0 else start
-        path_stop = end_index
-        segment_slice = slice(path_start, path_stop)
         for key, value in segment.constraints.fix.items():
-            if path_stop > path_start:
-                apply_value_constraint(opti, dyn, throttle, key, segment_slice, value, equality=True)
+            segment_slice = segment_constraint_slice(key, start, end_index)
+            if segment_slice.stop > segment_slice.start:
+                apply_value_constraint(
+                    opti,
+                    dyn,
+                    throttle,
+                    key,
+                    segment_slice,
+                    value,
+                    equality=True,
+                    rho=rho,
+                    rho0=rho0,
+                )
         for key, value in segment.constraints.minimum.items():
-            if path_stop > path_start:
-                expr, converted = apply_value_constraint(opti, dyn, throttle, key, segment_slice, value, equality=False)
+            segment_slice = segment_constraint_slice(key, start, end_index)
+            if segment_slice.stop > segment_slice.start:
+                expr, converted = apply_value_constraint(
+                    opti,
+                    dyn,
+                    throttle,
+                    key,
+                    segment_slice,
+                    value,
+                    equality=False,
+                    rho=rho,
+                    rho0=rho0,
+                )
                 opti.subject_to(expr >= converted)
         for key, value in segment.constraints.maximum.items():
-            if path_stop > path_start:
-                expr, converted = apply_value_constraint(opti, dyn, throttle, key, segment_slice, value, equality=False)
+            segment_slice = segment_constraint_slice(key, start, end_index)
+            if segment_slice.stop > segment_slice.start:
+                expr, converted = apply_value_constraint(
+                    opti,
+                    dyn,
+                    throttle,
+                    key,
+                    segment_slice,
+                    value,
+                    equality=False,
+                    rho=rho,
+                    rho0=rho0,
+                )
                 opti.subject_to(expr <= converted)
 
         start = end_index
@@ -291,7 +354,19 @@ def build_coupled_problem(
     opti = asb.Opti()
 
     n = mission.num_nodes
-    time = onp.linspace(0.0, mission.duration, n)
+    if mode == "schedule" and schedule.duration_s is None:
+        duration_lower, duration_upper = schedule.duration_bounds_s or (0.5 * mission.duration, 2.0 * mission.duration)
+        duration = opti.variable(
+            init_guess=mission.duration,
+            lower_bound=duration_lower,
+            upper_bound=duration_upper,
+            scale=mission.duration,
+        )
+    else:
+        duration = mission.duration
+    tau = onp.linspace(0.0, 1.0, n)
+    time = tau * duration
+    time_guess = tau * mission.duration
     climb_end = int(0.25 * (n - 1))
     descent_start = int(0.75 * (n - 1))
 
@@ -308,9 +383,9 @@ def build_coupled_problem(
     )
 
     x_guess = onp.linspace(0.0, mission.range, n)
-    z_guess = smooth_piecewise_altitude(time, mission.duration, mission.cruise_altitude)
+    z_guess = smooth_piecewise_altitude(time_guess, mission.duration, mission.cruise_altitude)
     v_guess = onp.full(n, mission.initial_speed)
-    gamma_guess = onp.gradient(z_guess, time) / mission.initial_speed
+    gamma_guess = onp.gradient(z_guess, time_guess) / mission.initial_speed
     fuel_guess = onp.linspace(0.0, 140.0, n)
     altitude_upper_bound = mission.cruise_altitude if mode in {"segmented", "schedule"} else 1.8 * mission.cruise_altitude
 
@@ -373,9 +448,15 @@ def build_coupled_problem(
         ]
     )
 
+    rho0 = float(asb.Atmosphere(altitude=0.0).density())
+    rho = dyn.op_point.atmosphere.density()
+    t_env = dyn.op_point.atmosphere.temperature()
+    density_ratio = rho / rho0
+
     if mode == "schedule":
-        segment_indices = apply_schedule_constraints(opti, dyn, throttle, schedule, time)
-        opti.subject_to([dyn.gamma[0] == 0.0, dyn.gamma[-1] == 0.0])
+        segment_indices = apply_schedule_constraints(opti, dyn, throttle, schedule, time, rho=rho, rho0=rho0)
+        segment_labels = [segment_plot_label(segment, i) for i, segment in enumerate(schedule.segments)]
+        opti.subject_to(dyn.gamma[0] == 0.0)
     else:
         opti.subject_to(
             [
@@ -402,11 +483,8 @@ def build_coupled_problem(
                 ]
             )
         segment_indices = []
+        segment_labels = []
 
-    rho0 = float(asb.Atmosphere(altitude=0.0).density())
-    rho = dyn.op_point.atmosphere.density()
-    t_env = dyn.op_point.atmosphere.temperature()
-    density_ratio = rho / rho0
     q_dyn = dyn.op_point.dynamic_pressure()
     induced_factor = 1 / (np.pi * aircraft.aspect_ratio * aircraft.oswald_efficiency)
     cd = aircraft.cd0 + induced_factor * cl**2
@@ -490,8 +568,10 @@ def build_coupled_problem(
     return {
         "opti": opti,
         "time": time,
+        "duration": duration,
         "mode": mode,
         "segment_indices": segment_indices,
+        "segment_labels": segment_labels,
         "states": {
             "x": dyn.x_e,
             "altitude": dyn.altitude,
@@ -512,65 +592,74 @@ def build_coupled_problem(
 
 def plot_solution(problem, sol, output_path):
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    time_min = problem["time"] / 60
+    try:
+        time = onp.array(sol.value(problem["time"]), dtype=float)
+    except Exception:
+        time = onp.array(problem["time"], dtype=float)
+    time_min = time / 60
     states = problem["states"]
     aux = problem["aux"]
     segment_indices = problem.get("segment_indices", [])
+    segment_labels = problem.get("segment_labels", [])
 
     values = {
-        "altitude_m": onp.array(sol.value(states["altitude"])),
-        "range_km": onp.array(sol.value(states["x"])) / 1000,
-        "speed_m_s": onp.array(sol.value(states["V"])),
+        "altitude_ft": onp.array(sol.value(states["altitude"])) * M_TO_FT,
+        "range_nmi": onp.array(sol.value(states["x"])) * M_TO_NMI,
+        "speed_kt": onp.array(sol.value(states["V"])) * MPS_TO_KT,
+        "gamma_deg": onp.degrees(onp.array(sol.value(states["gamma"]))),
         "throttle": onp.array(sol.value(states["throttle"])),
-        "mass_kg": onp.array(sol.value(aux["mass"])),
-        "fuel_flow_kg_s": onp.array(sol.value(aux["m_dot_fuel"])),
-        "pressure_bar": onp.array(sol.value(aux["pressure"])) / 1e5,
+        "mass_lbm": onp.array(sol.value(aux["mass"])) * KG_TO_LBM,
+        "fuel_flow_lb_hr": onp.array(sol.value(aux["m_dot_fuel"])) * KGPS_TO_LBHR,
+        "pressure_psia": onp.array(sol.value(aux["pressure"])) * PA_TO_PSIA,
         "fill_level": onp.array(sol.value(aux["fill_level"])),
-        "t_gas_K": onp.array(sol.value(states["T_gas"])),
-        "t_liq_K": onp.array(sol.value(states["T_liq"])),
-        "t_env_K": onp.array(sol.value(aux["t_env"])),
+        "t_gas_R": onp.array(sol.value(states["T_gas"])) * K_TO_R,
+        "t_liq_R": onp.array(sol.value(states["T_liq"])) * K_TO_R,
+        "t_env_R": onp.array(sol.value(aux["t_env"])) * K_TO_R,
     }
-    values["equivalent_speed_m_s"] = values["speed_m_s"] * onp.sqrt(
+    values["equivalent_speed_kt"] = values["speed_kt"] * onp.sqrt(
         onp.array(sol.value(aux["rho"])) / float(aux["rho0"])
     )
 
-    fig, axes = plt.subplots(4, 2, figsize=(12, 13), sharex=True)
+    fig, axes = plt.subplots(5, 2, figsize=(12, 15), sharex=True)
     axes = axes.ravel()
     plots = [
-        ("altitude_m", "Altitude [m]"),
-        ("speed_m_s", "Speed [m/s]"),
+        ("altitude_ft", "Altitude [ft]"),
+        ("speed_kt", "Speed [kt]"),
+        ("gamma_deg", "Flight path angle [deg]"),
         ("throttle", "Throttle [-]"),
-        ("fuel_flow_kg_s", "Fuel flow [kg/s]"),
-        ("mass_kg", "Aircraft mass [kg]"),
-        ("pressure_bar", "Tank pressure [bar]"),
+        ("fuel_flow_lb_hr", "Fuel flow [lb/hr]"),
+        ("mass_lbm", "Aircraft mass [lbm]"),
+        ("pressure_psia", "Tank pressure [psia]"),
         ("fill_level", "Tank fill level [-]"),
-        ("t_gas_K", "Tank temperatures [K]"),
+        ("t_gas_R", "Tank temperatures [R]"),
     ]
 
     for ax, (key, ylabel) in zip(axes, plots):
         ax.plot(time_min, values[key], linewidth=2)
-        if key == "speed_m_s":
+        if key == "speed_kt":
             ax.lines[0].set_label("True")
-            ax.plot(time_min, values["equivalent_speed_m_s"], linewidth=2, label="Equivalent")
+            ax.plot(time_min, values["equivalent_speed_kt"], linewidth=2, label="Equivalent")
             ax.legend(loc="best")
-        if key == "t_gas_K":
-            ax.plot(time_min, values["t_liq_K"], linewidth=2, label="Liquid")
-            ax.plot(time_min, values["t_env_K"], linewidth=2, label="Atmosphere")
+        if key == "t_gas_R":
+            ax.plot(time_min, values["t_liq_R"], linewidth=2, label="Liquid")
+            ax.plot(time_min, values["t_env_R"], linewidth=2, label="Atmosphere")
             ax.lines[0].set_label("Ullage")
             ax.legend(loc="best")
         ax.set_ylabel(ylabel)
+        ax.set_xlabel("Time [min]")
+        ax.tick_params(axis="x", which="both", bottom=True, labelbottom=True)
         ax.grid(True, alpha=0.3)
         for segment_index in segment_indices[:-1]:
             ax.axvline(time_min[segment_index], color="0.55", linewidth=1.0, alpha=0.75)
 
-    for ax in axes[-2:]:
-        ax.set_xlabel("Time [min]")
+    for ax in axes[len(plots) :]:
+        ax.set_visible(False)
     if segment_indices:
-        for segment_index in segment_indices[:-1]:
+        for label, segment_index in zip(segment_labels[1:], segment_indices[:-1]):
             axes[0].text(
                 time_min[segment_index],
                 0.98,
-                "segment",
+                label,
                 transform=axes[0].get_xaxis_transform(),
                 rotation=90,
                 va="top",
@@ -591,11 +680,16 @@ def run_case(mode: str):
     output_path = OUTPUT_DIR / f"lng_coupled_aerosandbox_mission_{mode}.png"
     values = plot_solution(problem, sol, output_path)
 
-    fuel_used = values["mass_kg"][0] - values["mass_kg"][-1]
+    fuel_used = values["mass_lbm"][0] - values["mass_lbm"][-1]
+    try:
+        duration_s = float(sol.value(problem["duration"]))
+    except Exception:
+        duration_s = float(problem["duration"])
     print(f"Coupled LNG AeroSandbox mission solved ({mode})")
-    print(f"Final range: {values['range_km'][-1]:.1f} km")
-    print(f"Fuel and boil-off mass reduction: {fuel_used:.2f} kg")
-    print(f"Final tank pressure: {values['pressure_bar'][-1]:.3f} bar")
+    print(f"Final range: {values['range_nmi'][-1]:.1f} nmi")
+    print(f"Final duration: {duration_s / 60:.2f} min")
+    print(f"Fuel and boil-off mass reduction: {fuel_used:.2f} lbm")
+    print(f"Final tank pressure: {values['pressure_psia'][-1]:.3f} psia")
     print(f"Final fill level: {values['fill_level'][-1]:.4f}")
     print(f"Saved plot: {output_path}")
     return problem, sol, values

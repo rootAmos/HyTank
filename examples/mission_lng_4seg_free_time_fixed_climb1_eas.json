@@ -1,5 +1,5 @@
 {
-  "mission_name": "lng_4_segment_coupled_demo",
+  "mission_name": "lng_4_segment_free_time_fixed_climb1_eas",
   "units": {
     "altitude": "m",
     "distance": "m",
@@ -9,11 +9,12 @@
     "power": "fraction"
   },
   "num_nodes": 61,
-  "duration_s": 2400.0,
+  "duration_guess_s": 2400.0,
+  "duration_bounds_s": [1200.0, 7200.0],
   "range_m": 170000.0,
   "initial": {
     "altitude_m": 0.0,
-    "speed_m_s": 78.0
+    "speed_m_s": 72.0
   },
   "final": {
     "altitude_m": 0.0,
@@ -21,21 +22,16 @@
   },
   "segments": [
     {
-      "name": "climb_1_tight_power_speed_band",
+      "name": "climb_1_fixed_throttle_eas",
       "segment_type": "climb",
       "end": {
         "condition": "altitude",
-        "node_fraction": 0.25,
-        "altitude_m": 1200.0
+        "node_fraction": 0.25
       },
       "constraints": {
-        "min": {
-          "speed_m_s": 72.0,
-          "power_fraction": 0.62
-        },
-        "max": {
-          "speed_m_s": 82.0,
-          "power_fraction": 0.72
+        "fix": {
+          "power_fraction": 0.55,
+          "equivalent_speed_m_s": 72.0
         }
       }
     },
@@ -44,9 +40,7 @@
       "segment_type": "climb",
       "end": {
         "condition": "altitude",
-        "node_fraction": 0.45,
-        "altitude_m": 2500.0,
-        "gamma_deg": 0.0
+        "node_fraction": 0.45
       },
       "constraints": {
         "min": {
@@ -67,8 +61,7 @@
         "node_fraction": 0.75,
         "distance_m": 127500.0,
         "altitude_m": 2500.0,
-        "speed_m_s": 72.0,
-        "gamma_deg": 0.0
+        "speed_m_s": 72.0
       },
       "constraints": {
         "fix": {
@@ -83,7 +76,7 @@
       }
     },
     {
-      "name": "descent_fixed_speed_angle",
+      "name": "descent_speed_band",
       "segment_type": "descent",
       "end": {
         "condition": "distance",

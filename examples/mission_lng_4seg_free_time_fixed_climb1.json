@@ -1,5 +1,5 @@
 {
-  "mission_name": "lng_4_segment_coupled_demo",
+  "mission_name": "lng_4_segment_free_time_fixed_climb1",
   "units": {
     "altitude": "m",
     "distance": "m",
@@ -9,7 +9,8 @@
     "power": "fraction"
   },
   "num_nodes": 61,
-  "duration_s": 2400.0,
+  "duration_guess_s": 2400.0,
+  "duration_bounds_s": [2000.0, 3600.0],
   "range_m": 170000.0,
   "initial": {
     "altitude_m": 0.0,
@@ -21,7 +22,7 @@
   },
   "segments": [
     {
-      "name": "climb_1_tight_power_speed_band",
+      "name": "climb_1_fixed_throttle_speed_band",
       "segment_type": "climb",
       "end": {
         "condition": "altitude",
@@ -29,13 +30,14 @@
         "altitude_m": 1200.0
       },
       "constraints": {
+        "fix": {
+          "power_fraction": 0.67
+        },
         "min": {
-          "speed_m_s": 72.0,
-          "power_fraction": 0.62
+          "speed_m_s": 72.0
         },
         "max": {
-          "speed_m_s": 82.0,
-          "power_fraction": 0.72
+          "speed_m_s": 82.0
         }
       }
     },
@@ -83,7 +85,7 @@
       }
     },
     {
-      "name": "descent_fixed_speed_angle",
+      "name": "descent_fixed_speed_band",
       "segment_type": "descent",
       "end": {
         "condition": "distance",
